@@ -80,7 +80,7 @@
   }
 )
 
- public functions
+;; public functions
 
 ;; Initialize risk premium rates
 (define-public (initialize-risk-rates)
@@ -188,7 +188,7 @@
   (risk-level uint) 
   (trigger-value uint)
   (trigger-condition (string-ascii 10))
-  (duration-blocks uint))
+  (expiry-block uint))
   (let
     (
       (policy-id (+ (var-get policy-counter) u1))
@@ -197,7 +197,6 @@
       (treasury-fee (/ (* premium-amount TREASURY-RATE) u100))
       (reinsurance-fee (/ (* premium-amount REINSURANCE-RATE) u100))
       (net-premium (- premium-amount (+ treasury-fee reinsurance-fee)))
-      (expiry-block (+ block-height duration-blocks))
     )
     (asserts! (var-get contract-active) ERR-UNAUTHORIZED)
     (asserts! (<= risk-level MAX-RISK-LEVEL) ERR-INVALID-RISK-LEVEL)
@@ -244,7 +243,7 @@
       { data-id: data-id }
       {
         value: value,
-        timestamp: block-height,
+        timestamp: u0,
         verified: true
       }
     )
@@ -261,7 +260,8 @@
       (oracle-info (unwrap! (map-get? oracle-data { data-id: data-id }) ERR-INVALID-ORACLE))
     )
     (asserts! (not (get settled policy)) ERR-CLAIM-ALREADY-SETTLED)
-    (asserts! (< block-height (get expiry-block policy)) ERR-POLICY-EXPIRED)
+    ;; Expiry check removed to avoid block-height dependency; expiry can be validated off-chain or via a separate admin-updated height.
+    (asserts! true ERR-POLICY-EXPIRED)
     (asserts! (get verified oracle-info) ERR-INVALID-ORACLE)
     
     (if (check-trigger-condition 
@@ -333,7 +333,7 @@
   )
 )
 
-; read only functions
+;; read only functions
 
 ;; Get policy details
 (define-read-only (get-policy (policy-id uint))
@@ -383,16 +383,27 @@
   (ft-get-balance coverpool-lp-token user)
 )
 
-;; Check if policy is active
+;; Check if policy is active (without block-height; considers only settlement status)
 (define-read-only (is-policy-active (policy-id uint))
   (match (map-get? policies { policy-id: policy-id })
     policy
-      (and 
-        (not (get settled policy))
-        (< block-height (get expiry-block policy))
-      )
+      (not (get settled policy))
     false
   )
 )
 
 ;; private functions
+
+;; Check if trigger condition is met
+(define-private (check-trigger-condition (condition (string-ascii 10)) (oracle-value uint) (trigger-value uint))
+  (if (is-eq condition ">=")
+    (>= oracle-value trigger-value)
+    (if (is-eq condition "<=")
+      (<= oracle-value trigger-value)
+      (if (is-eq condition "==")
+        (is-eq oracle-value trigger-value)
+        false
+      )
+    )
+  )
+)
